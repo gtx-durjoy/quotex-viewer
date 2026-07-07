@@ -1,5 +1,5 @@
 # ======================================================
-#  📡 Quotex ক্যান্ডেল API (Vercel Python 3.9)
+#  📡 Quotex ক্যান্ডেল API (Vercel Python)
 # ======================================================
 
 import json
@@ -15,16 +15,9 @@ from datetime import datetime
 CONFIG = {
     "TARGET_URL": "https://market-qx.trade/en",
     "CANDLE_LIMIT": 500,
-    "RSI_PERIOD": 14,
-    "SMA_SHORT": 20,
-    "SMA_LONG": 50,
 }
 
 DATA_FILE = "/tmp/candles.json"
-
-# ======================================================
-#  ডাটা স্টোরেজ
-# ======================================================
 
 def load_candles():
     try:
@@ -41,10 +34,6 @@ def save_candles(candles):
             json.dump(candles, f, indent=2)
     except:
         pass
-
-# ======================================================
-#  স্ক্র্যাপার
-# ======================================================
 
 def scrape_candle():
     try:
@@ -71,10 +60,6 @@ def scrape_candle():
     except Exception as e:
         print(f"Error: {e}")
         return None
-
-# ======================================================
-#  টেকনিক্যাল ইন্ডিকেটর
-# ======================================================
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
@@ -123,18 +108,12 @@ def generate_signal(candles):
         signal['reason'] = f'ডেথ ক্রস (SMA20 {sma20:.2f} < SMA50 {sma50:.2f})'
     return signal
 
-# ======================================================
-#  Vercel Handler
-# ======================================================
-
 def handler(request):
     try:
-        # GET প্যারামিটার
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(request.url)
         params = parse_qs(parsed.query)
         
-        # UI
         if 'ui' in params:
             return {
                 'statusCode': 200,
@@ -142,10 +121,8 @@ def handler(request):
                 'body': get_ui_html()
             }
         
-        # ডাটা লোড
         candles = load_candles()
         
-        # স্ক্র্যাপ
         if 'scrape' in params:
             new_candle = scrape_candle()
             if new_candle:
@@ -154,7 +131,6 @@ def handler(request):
                     candles = candles[-CONFIG["CANDLE_LIMIT"]:]
                 save_candles(candles)
         
-        # রেসপন্স
         response_data = {
             'status': 'running',
             'timestamp': datetime.now().isoformat(),
@@ -175,10 +151,6 @@ def handler(request):
             'headers': {'Content-Type': 'application/json'},
             'body': json.dumps({'error': str(e)})
         }
-
-# ======================================================
-#  HTML UI
-# ======================================================
 
 def get_ui_html():
     return """
