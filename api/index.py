@@ -1,4 +1,6 @@
-# api/index.py - Vercel-এর জন্য ঠিক করা
+# ======================================================
+#  📡 Quotex ক্যান্ডেল API (Vercel Python 3.9)
+# ======================================================
 
 import json
 import os
@@ -20,6 +22,10 @@ CONFIG = {
 
 DATA_FILE = "/tmp/candles.json"
 
+# ======================================================
+#  ডাটা স্টোরেজ
+# ======================================================
+
 def load_candles():
     try:
         if os.path.exists(DATA_FILE):
@@ -35,6 +41,10 @@ def save_candles(candles):
             json.dump(candles, f, indent=2)
     except:
         pass
+
+# ======================================================
+#  স্ক্র্যাপার
+# ======================================================
 
 def scrape_candle():
     try:
@@ -61,6 +71,10 @@ def scrape_candle():
     except Exception as e:
         print(f"Error: {e}")
         return None
+
+# ======================================================
+#  টেকনিক্যাল ইন্ডিকেটর
+# ======================================================
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
@@ -110,51 +124,57 @@ def generate_signal(candles):
     return signal
 
 # ======================================================
-#  Vercel Handler (Serverless Function)
+#  Vercel Handler
 # ======================================================
 
 def handler(request):
-    """Vercel Python Runtime-এর জন্য সঠিক ফরম্যাট"""
-    from urllib.parse import urlparse, parse_qs
-    
-    # URL পার্স
-    parsed = urlparse(request.url)
-    params = parse_qs(parsed.query)
-    
-    # UI দেখানোর জন্য
-    if 'ui' in params:
+    try:
+        # GET প্যারামিটার
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(request.url)
+        params = parse_qs(parsed.query)
+        
+        # UI
+        if 'ui' in params:
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'text/html'},
+                'body': get_ui_html()
+            }
+        
+        # ডাটা লোড
+        candles = load_candles()
+        
+        # স্ক্র্যাপ
+        if 'scrape' in params:
+            new_candle = scrape_candle()
+            if new_candle:
+                candles.append(new_candle)
+                if len(candles) > CONFIG["CANDLE_LIMIT"]:
+                    candles = candles[-CONFIG["CANDLE_LIMIT"]:]
+                save_candles(candles)
+        
+        # রেসপন্স
+        response_data = {
+            'status': 'running',
+            'timestamp': datetime.now().isoformat(),
+            'total_candles': len(candles),
+            'candles': candles[-50:] if candles else [],
+            'signal': generate_signal(candles) if len(candles) > 20 else None
+        }
+        
         return {
             'statusCode': 200,
-            'headers': {'Content-Type': 'text/html'},
-            'body': get_ui_html()
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps(response_data, indent=2)
         }
-    
-    # ডাটা লোড
-    candles = load_candles()
-    
-    # স্ক্র্যাপ
-    if 'scrape' in params:
-        new_candle = scrape_candle()
-        if new_candle:
-            candles.append(new_candle)
-            if len(candles) > CONFIG["CANDLE_LIMIT"]:
-                candles = candles[-CONFIG["CANDLE_LIMIT"]:]
-            save_candles(candles)
-    
-    # রেসপন্স
-    response_data = {
-        'status': 'running',
-        'timestamp': datetime.now().isoformat(),
-        'total_candles': len(candles),
-        'candles': candles[-50:] if candles else [],
-        'signal': generate_signal(candles) if len(candles) > 20 else None
-    }
-    
-    return {
-        'statusCode': 200,
-        'headers': {'Content-Type': 'application/json'},
-        'body': json.dumps(response_data, indent=2)
-    }
+        
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({'error': str(e)})
+        }
 
 # ======================================================
 #  HTML UI
