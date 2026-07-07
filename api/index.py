@@ -1,8 +1,3 @@
-# ======================================================
-#  📡 Quotex ক্যান্ডেল API (Vercel রেডি)
-#  🚀 টেলিগ্রাম ছাড়া - শুধু JSON ডাটা
-# ======================================================
-
 import json
 import os
 import time
@@ -16,7 +11,7 @@ from typing import List, Dict, Optional
 # ======================================================
 
 CONFIG = {
-    "TARGET_URL": os.environ.get("TARGET_URL", "https://market-qx.trade/en"),
+    "TARGET_URL": "https://market-qx.trade/en",
     "CANDLE_LIMIT": 500,
     "RSI_PERIOD": 14,
     "SMA_SHORT": 20,
@@ -48,16 +43,14 @@ def save_candles(candles: List[Dict]):
         pass
 
 # ======================================================
-#  ক্যান্ডেল স্ক্র্যাপার
+#  ক্যান্ডেল স্ক্র্যাপার (Vercel-এ কাজ করবে)
 # ======================================================
 
 def scrape_candle() -> Optional[Dict]:
-    """সাইট থেকে ক্যান্ডেল ডাটা নিয়ে আসো"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/137.0.0.0',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
             'Cache-Control': 'no-cache'
         }
         
@@ -157,49 +150,40 @@ def generate_signal(candles: List[Dict]) -> Optional[Dict]:
     return signal
 
 # ======================================================
-#  API হ্যান্ডলার
+#  API হ্যান্ডলার (Vercel-এর জন্য)
 # ======================================================
 
 class handler(BaseHTTPRequestHandler):
     
     def do_GET(self):
         try:
-            candles = load_candles()
-            
-            # ক্যোয়ারি প্যারামিটার পার্স করো
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(self.path)
             params = parse_qs(parsed.query)
             
-            # যদি HTML চায়, তাহলে UI পাঠাও
+            candles = load_candles()
+            
+            # যদি UI চায়
             if 'ui' in params:
                 self.send_ui()
                 return
             
-            # নতুন ক্যান্ডেল স্ক্র্যাপ করো
-            new_candle = scrape_candle()
-            
+            # যদি scrape চায় (নতুন ডাটা আপডেট)
+            if 'scrape' in params:
+                new_candle = scrape_candle()
+                if new_candle:
+                    candles.append(new_candle)
+                    if len(candles) > CONFIG["CANDLE_LIMIT"]:
+                        candles = candles[-CONFIG["CANDLE_LIMIT"]:]
+                    save_candles(candles)
+                
             response_data = {
                 'status': 'running',
                 'timestamp': datetime.now().isoformat(),
-                'total_candles': len(candles)
+                'total_candles': len(candles),
+                'candles': candles[-50:] if candles else [],
+                'signal': generate_signal(candles) if len(candles) > 20 else None
             }
-            
-            if new_candle:
-                candles.append(new_candle)
-                if len(candles) > CONFIG["CANDLE_LIMIT"]:
-                    candles = candles[-CONFIG["CANDLE_LIMIT"]:]
-                save_candles(candles)
-                response_data['latest_candle'] = new_candle
-            
-            # লিমিট প্যারামিটার
-            limit = int(params.get('limit', [10])[0])
-            response_data['candles'] = candles[-limit:] if candles else []
-            
-            # সিগন্যাল
-            if 'signal' in params:
-                signal = generate_signal(candles)
-                response_data['signal'] = signal if signal else {'action': 'HOLD', 'reason': 'পর্যাপ্ত ডাটা নেই'}
             
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -213,43 +197,8 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
     
-    def do_POST(self):
-        try:
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = json.loads(self.rfile.read(content_length)) if content_length > 0 else {}
-            
-            action = post_data.get('action', '')
-            candles = load_candles()
-            
-            if action == 'signal':
-                signal = generate_signal(candles)
-                response = {
-                    'status': 'success',
-                    'signal': signal if signal else {'action': 'HOLD', 'reason': 'পর্যাপ্ত ডাটা নেই'}
-                }
-            elif action == 'clear':
-                save_candles([])
-                response = {'status': 'success', 'message': 'ডাটা ক্লিয়ার করা হয়েছে'}
-            else:
-                response = {
-                    'status': 'error',
-                    'message': 'অজানা অ্যাকশন। signal বা clear ব্যবহার করো'
-                }
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps(response, indent=2).encode('utf-8'))
-            
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
-    
     def send_ui(self):
-        """সুন্দর UI HTML পাঠাও"""
+        """সুন্দর HTML UI"""
         html = """
 <!DOCTYPE html>
 <html>
@@ -258,351 +207,163 @@ class handler(BaseHTTPRequestHandler):
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            background: #0a0a0f;
-            color: #e0e0e0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            padding: 20px;
-        }
+        body { background: #0a0a0f; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; padding: 20px; }
         .container { max-width: 1200px; margin: auto; }
-        
-        /* হেডার */
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px;
-            background: #14141e;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            border: 1px solid #2a2a3a;
-        }
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 20px; background: #14141e; border-radius: 12px; margin-bottom: 20px; border: 1px solid #2a2a3a; }
         .header h1 { color: #00ff88; font-size: 28px; }
-        .header .status {
-            padding: 8px 16px;
-            background: #00ff88;
-            color: #000;
-            border-radius: 20px;
-            font-weight: bold;
-        }
-        
-        /* সিগন্যাল কার্ড */
-        .signal-card {
-            background: #14141e;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-            border: 2px solid #2a2a3a;
-            text-align: center;
-        }
-        .signal-card .signal-big {
-            font-size: 48px;
-            font-weight: bold;
-        }
+        .btn { padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; background: #2a2a3a; color: #e0e0e0; }
+        .btn-primary { background: #00ff88; color: #000; }
+        .btn-danger { background: #ff4466; color: #fff; }
+        .signal-card { background: #14141e; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #2a2a3a; text-align: center; }
+        .signal-big { font-size: 48px; font-weight: bold; }
         .signal-buy { color: #00ff88; }
         .signal-sell { color: #ff4466; }
         .signal-hold { color: #ffaa00; }
-        
-        /* চার্ট */
-        .chart-container {
-            background: #14141e;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-            border: 1px solid #2a2a3a;
-            overflow-x: auto;
-        }
-        .chart {
-            display: flex;
-            align-items: flex-end;
-            height: 300px;
-            gap: 2px;
-        }
-        .candle {
-            min-width: 8px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            position: relative;
-        }
-        .candle-body {
-            width: 8px;
-            border-radius: 2px;
-            min-height: 2px;
-        }
+        .chart-container { background: #14141e; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #2a2a3a; overflow-x: auto; }
+        .chart { display: flex; align-items: flex-end; height: 300px; gap: 2px; }
+        .candle { min-width: 8px; display: flex; flex-direction: column; align-items: center; }
+        .candle-body { width: 8px; border-radius: 2px; min-height: 2px; }
         .candle-up .candle-body { background: #00ff88; }
         .candle-down .candle-body { background: #ff4466; }
-        .candle .wick {
-            width: 2px;
-            background: #888;
-            margin: 0 auto;
-        }
-        
-        /* টেবিল */
-        .table-container {
-            background: #14141e;
-            border-radius: 12px;
-            padding: 20px;
-            border: 1px solid #2a2a3a;
-            overflow-x: auto;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        th {
-            text-align: left;
-            padding: 12px;
-            background: #1a1a2e;
-            color: #888;
-            font-weight: 600;
-        }
-        td {
-            padding: 10px 12px;
-            border-bottom: 1px solid #1a1a2e;
-        }
+        .candle .wick { width: 2px; background: #888; margin: 0 auto; }
+        .table-container { background: #14141e; border-radius: 12px; padding: 20px; border: 1px solid #2a2a3a; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th { text-align: left; padding: 12px; background: #1a1a2e; color: #888; }
+        td { padding: 10px 12px; border-bottom: 1px solid #1a1a2e; }
         .price-up { color: #00ff88; }
         .price-down { color: #ff4466; }
-        
-        /* বাটন */
-        .btn {
-            padding: 10px 24px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: all 0.3s;
-            background: #2a2a3a;
-            color: #e0e0e0;
-        }
-        .btn:hover { transform: scale(1.05); }
-        .btn-primary { background: #00ff88; color: #000; }
-        .btn-danger { background: #ff4466; color: #fff; }
-        
-        /* রেস্পন্সিভ */
-        @media (max-width: 600px) {
-            .header { flex-direction: column; gap: 10px; text-align: center; }
-            .signal-card .signal-big { font-size: 32px; }
-            .candle { min-width: 4px; }
-            .candle-body { width: 4px; }
-        }
+        @media (max-width: 600px) { .header { flex-direction: column; gap: 10px; } .signal-big { font-size: 32px; } .candle { min-width: 4px; } .candle-body { width: 4px; } }
     </style>
 </head>
 <body>
 <div class="container">
-    <!-- হেডার -->
     <div class="header">
         <h1>📊 Quotex ক্যান্ডেল</h1>
         <div>
-            <span class="status" id="status">● লাইভ</span>
-            <button class="btn btn-danger" onclick="clearData()" style="margin-left:10px;">🗑️ ক্লিয়ার</button>
-            <button class="btn btn-primary" onclick="refreshData()" style="margin-left:10px;">🔄 রিফ্রেশ</button>
+            <button class="btn btn-primary" onclick="refreshData()">🔄 রিফ্রেশ</button>
+            <button class="btn btn-danger" onclick="clearData()">🗑️ ক্লিয়ার</button>
         </div>
     </div>
     
-    <!-- সিগন্যাল -->
     <div class="signal-card" id="signalCard">
         <div style="font-size:14px;color:#888;">বর্তমান সিগন্যাল</div>
         <div class="signal-big signal-hold" id="signalText">⏳ লোড হচ্ছে...</div>
         <div style="font-size:14px;color:#888;margin-top:8px;" id="signalReason"></div>
     </div>
     
-    <!-- চার্ট -->
     <div class="chart-container">
-        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-            <span>📈 ক্যান্ডেল চার্ট</span>
-            <span id="chartInfo">লোড হচ্ছে...</span>
-        </div>
-        <div class="chart" id="chart"></div>
+        <div id="chart"></div>
     </div>
     
-    <!-- টেবিল -->
     <div class="table-container">
-        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-            <span>📋 সর্বশেষ ক্যান্ডেল</span>
-            <span id="tableInfo"></span>
-        </div>
         <table>
-            <thead>
-                <tr>
-                    <th>সময়</th>
-                    <th>প্রাইস</th>
-                    <th>ওপেন</th>
-                    <th>হাই</th>
-                    <th>লো</th>
-                    <th>ক্লোজ</th>
-                    <th>ভলিউম</th>
-                </tr>
-            </thead>
+            <thead><tr><th>সময়</th><th>প্রাইস</th><th>ওপেন</th><th>হাই</th><th>লো</th><th>ক্লোজ</th><th>ভলিউম</th></tr></thead>
             <tbody id="tableBody"></tbody>
         </table>
     </div>
 </div>
 
 <script>
-    // ==============================================
-    //  ডাটা লোড করা
-    // ==============================================
-    
-    async function loadData() {
-        try {
-            const response = await fetch('/api/index?limit=50&signal=true');
-            const data = await response.json();
-            
-            if (data.error) {
-                console.error(data.error);
-                return;
+async function loadData() {
+    try {
+        const res = await fetch('/api/index?limit=50&signal=true');
+        const data = await res.json();
+        if (data.error) return;
+        
+        if (data.signal) {
+            const el = document.getElementById('signalText');
+            const reason = document.getElementById('signalReason');
+            if (data.signal.action === 'BUY') {
+                el.textContent = '🟢 BUY'; el.className = 'signal-big signal-buy';
+                reason.textContent = data.signal.reason;
+            } else if (data.signal.action === 'SELL') {
+                el.textContent = '🔴 SELL'; el.className = 'signal-big signal-sell';
+                reason.textContent = data.signal.reason;
+            } else {
+                el.textContent = '🟡 HOLD'; el.className = 'signal-big signal-hold';
+                reason.textContent = 'কোনো সিগন্যাল নেই';
             }
-            
-            // সিগন্যাল আপডেট
-            if (data.signal) {
-                const signal = data.signal;
-                const el = document.getElementById('signalText');
-                const reason = document.getElementById('signalReason');
-                
-                if (signal.action === 'BUY') {
-                    el.textContent = '🟢 BUY';
-                    el.className = 'signal-big signal-buy';
-                    reason.textContent = signal.reason;
-                } else if (signal.action === 'SELL') {
-                    el.textContent = '🔴 SELL';
-                    el.className = 'signal-big signal-sell';
-                    reason.textContent = signal.reason;
-                } else {
-                    el.textContent = '🟡 HOLD';
-                    el.className = 'signal-big signal-hold';
-                    reason.textContent = 'কোনো সিগন্যাল নেই';
-                }
-            }
-            
-            // চার্ট আপডেট
-            if (data.candles && data.candles.length > 0) {
-                renderChart(data.candles);
-                renderTable(data.candles);
-                document.getElementById('chartInfo').textContent = 
-                    `শেষ ${data.candles.length} টি ক্যান্ডেল | ${new Date(data.timestamp).toLocaleString()}`;
-                document.getElementById('tableInfo').textContent = 
-                    `${data.total_candles} টি মোট ক্যান্ডেল`;
-            }
-            
-            // স্ট্যাটাস
-            document.getElementById('status').textContent = data.latest_candle ? '● লাইভ' : '● অফলাইন';
-            
-        } catch (error) {
-            console.error('ডাটা লোড করতে পারিনি:', error);
         }
-    }
-    
-    // ==============================================
-    //  চার্ট রেন্ডার
-    // ==============================================
-    
-    function renderChart(candles) {
-        const container = document.getElementById('chart');
-        container.innerHTML = '';
         
-        const maxPrice = Math.max(...candles.map(c => c.high));
-        const minPrice = Math.min(...candles.map(c => c.low));
-        const range = maxPrice - minPrice || 1;
-        
-        candles.forEach(candle => {
-            const div = document.createElement('div');
-            div.className = `candle ${candle.close >= candle.open ? 'candle-up' : 'candle-down'}`;
-            
-            // উইক (হাই-লো)
-            const wick = document.createElement('div');
-            wick.className = 'wick';
-            const wickHeight = ((candle.high - candle.low) / range) * 280 + 10;
-            wick.style.height = wickHeight + 'px';
-            div.appendChild(wick);
-            
-            // বডি (ওপেন-ক্লোজ)
-            const body = document.createElement('div');
-            body.className = 'candle-body';
-            const bodyHeight = Math.abs(candle.close - candle.open) / range * 280 + 2;
-            body.style.height = Math.max(bodyHeight, 2) + 'px';
-            div.appendChild(body);
-            
-            container.appendChild(div);
-        });
-    }
-    
-    // ==============================================
-    //  টেবিল রেন্ডার
-    // ==============================================
-    
-    function renderTable(candles) {
-        const tbody = document.getElementById('tableBody');
-        tbody.innerHTML = '';
-        
-        candles.slice().reverse().forEach(c => {
-            const tr = document.createElement('tr');
-            const time = new Date(c.timestamp * 1000).toLocaleTimeString();
-            const priceClass = c.close >= c.open ? 'price-up' : 'price-down';
-            
-            tr.innerHTML = `
-                <td>${time}</td>
-                <td class="${priceClass}">$${c.price.toFixed(2)}</td>
-                <td>$${c.open.toFixed(2)}</td>
-                <td>$${c.high.toFixed(2)}</td>
-                <td>$${c.low.toFixed(2)}</td>
-                <td class="${priceClass}">$${c.close.toFixed(2)}</td>
-                <td>${c.volume.toFixed(2)}</td>
-            `;
-            tbody.appendChild(tr);
-        });
-    }
-    
-    // ==============================================
-    //  একশন
-    // ==============================================
-    
-    async function refreshData() {
-        document.getElementById('status').textContent = '⏳ লোড...';
-        await loadData();
-    }
-    
-    async function clearData() {
-        if (!confirm('সব ডাটা ডিলিট করবে?')) return;
-        try {
-            await fetch('/api/index', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'clear' })
-            });
-            await loadData();
-        } catch (error) {
-            console.error(error);
+        if (data.candles && data.candles.length > 0) {
+            renderChart(data.candles);
+            renderTable(data.candles);
         }
-    }
+    } catch (e) { console.error(e); }
+}
+
+function renderChart(candles) {
+    const container = document.getElementById('chart');
+    container.innerHTML = '<div class="chart" id="chartInner"></div>';
+    const chart = document.getElementById('chartInner');
+    const maxPrice = Math.max(...candles.map(c => c.high));
+    const minPrice = Math.min(...candles.map(c => c.low));
+    const range = maxPrice - minPrice || 1;
     
-    // ==============================================
-    //  অটো রিফ্রেশ (প্রতি ১০ সেকেন্ডে)
-    // ==============================================
-    
-    loadData();
-    setInterval(loadData, 10000);
+    candles.forEach(c => {
+        const div = document.createElement('div');
+        div.className = `candle ${c.close >= c.open ? 'candle-up' : 'candle-down'}`;
+        const wick = document.createElement('div');
+        wick.className = 'wick';
+        wick.style.height = ((c.high - c.low) / range) * 280 + 10 + 'px';
+        div.appendChild(wick);
+        const body = document.createElement('div');
+        body.className = 'candle-body';
+        body.style.height = Math.max(Math.abs(c.close - c.open) / range * 280 + 2, 2) + 'px';
+        div.appendChild(body);
+        chart.appendChild(div);
+    });
+}
+
+function renderTable(candles) {
+    const tbody = document.getElementById('tableBody');
+    tbody.innerHTML = '';
+    candles.slice().reverse().forEach(c => {
+        const time = new Date(c.timestamp * 1000).toLocaleTimeString();
+        const cls = c.close >= c.open ? 'price-up' : 'price-down';
+        tbody.innerHTML += `<tr><td>${time}</td><td class="${cls}">$${c.price.toFixed(2)}</td><td>$${c.open.toFixed(2)}</td><td>$${c.high.toFixed(2)}</td><td>$${c.low.toFixed(2)}</td><td class="${cls}">$${c.close.toFixed(2)}</td><td>${c.volume.toFixed(2)}</td></tr>`;
+    });
+}
+
+async function refreshData() {
+    await fetch('/api/index?scrape=true');
+    await loadData();
+}
+
+async function clearData() {
+    if (!confirm('সব ডাটা ডিলিট করবে?')) return;
+    await fetch('/api/index', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear' }) });
+    await loadData();
+}
+
+loadData();
+setInterval(loadData, 15000);
 </script>
 </body>
 </html>
         """
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
-        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(html.encode('utf-8'))
     
-    def log_message(self, format, *args):
-        pass
-
-# ======================================================
-#  লোকাল রানের জন্য
-# ======================================================
-
-if __name__ == "__main__":
-    from http.server import HTTPServer
-    print("🚀 Quotex ভিউয়ার লোকাল সার্ভার চালু হচ্ছে...")
-    print("📡 http://localhost:8080/api/index?ui")
-    server = HTTPServer(('0.0.0.0', 8080), handler)
-    server.serve_forever()
+    def do_POST(self):
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = json.loads(self.rfile.read(content_length)) if content_length > 0 else {}
+            
+            if post_data.get('action') == 'clear':
+                save_candles([])
+                response = {'status': 'success', 'message': 'ক্লিয়ার করা হয়েছে'}
+            else:
+                response = {'status': 'error', 'message': 'অজানা অ্যাকশন'}
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode('utf-8'))
+            
+        except Exception as e:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
