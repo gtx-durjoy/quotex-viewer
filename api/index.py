@@ -1,5 +1,6 @@
 # ======================================================
 #  📡 Quotex ক্যান্ডেল API (Vercel Python)
+#  ✅ handler ফাংশন যোগ করা হয়েছে
 # ======================================================
 
 import json
@@ -108,12 +109,17 @@ def generate_signal(candles):
         signal['reason'] = f'ডেথ ক্রস (SMA20 {sma20:.2f} < SMA50 {sma50:.2f})'
     return signal
 
+# ======================================================
+#  ✅ Vercel Handler (এটাই মূল এন্ট্রি পয়েন্ট)
+# ======================================================
+
 def handler(request):
     try:
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(request.url)
         params = parse_qs(parsed.query)
         
+        # UI দেখানোর জন্য
         if 'ui' in params:
             return {
                 'statusCode': 200,
@@ -121,8 +127,10 @@ def handler(request):
                 'body': get_ui_html()
             }
         
+        # ডাটা লোড
         candles = load_candles()
         
+        # স্ক্র্যাপ
         if 'scrape' in params:
             new_candle = scrape_candle()
             if new_candle:
@@ -131,6 +139,7 @@ def handler(request):
                     candles = candles[-CONFIG["CANDLE_LIMIT"]:]
                 save_candles(candles)
         
+        # JSON রেসপন্স
         response_data = {
             'status': 'running',
             'timestamp': datetime.now().isoformat(),
@@ -151,6 +160,10 @@ def handler(request):
             'headers': {'Content-Type': 'application/json'},
             'body': json.dumps({'error': str(e)})
         }
+
+# ======================================================
+#  HTML UI
+# ======================================================
 
 def get_ui_html():
     return """
